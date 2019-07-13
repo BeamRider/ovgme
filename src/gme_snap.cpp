@@ -407,9 +407,9 @@ DWORD WINAPI GME_SnapCompare_Th(void* pargs)
 
   outlog = L"\r\n";
 
-  float duration = ((float)clock()-time)/CLOCKS_PER_SEC;
-  int mn = duration / 60.0f;
-  int sc = duration - (mn * 60.0f);
+  int duration = (clock()-time)/CLOCKS_PER_SEC;
+  int mn = duration / 60;
+  int sc = duration - (mn * 60);
 
   wchar_t wpbuff[128];
   swprintf(wpbuff, 128, L"%d entries analysed in %d minute(s) and %d second(s).\r\n", iteration, mn, sc);

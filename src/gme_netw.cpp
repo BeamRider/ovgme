@@ -17,28 +17,7 @@
 #include "gme_netw.h"
 #include "gme_logs.h"
 #include "pugixml.hpp"
-
-/* structure for common url */
-struct GME_Url_Struct
-{
-  char prot[8];
-  char host[256];
-  char port[64];
-  char path[256];
-  char file[256];
-};
-
-/* http response header structure */
-struct GME_Http_Head_Struct
-{
-  unsigned size;
-  short code;
-  char location[256];
-  char content_type[64];
-  unsigned content_length;
-  char transfer_encoding[64];
-};
-
+#include "winhttp.h"
 
 /*
   function to encode url from string
@@ -145,501 +124,327 @@ std::string GME_NetwDecodeUrl(const char* url)
   return decode;
 }
 
-
-/*
-  function to decode url to string
-*/
-std::string GME_NetwDecodeUrl(const std::string& url)
-{
-  /*
-    adapted from that: http://www.geekhideout.com/urlcode.shtml
-    thanks to the author....
-  */
-
-  char t1, t2;
-
-  std::string decode;
-  size_t s = url.size();
-
-  for(unsigned i = 0; i < s; i++) {
-    if(url[i] == '%') {
-      if(url[i+1] && url[i+2]) {
-        t1 = isdigit(url[i+1]) ? url[i+1]-'0' : tolower(url[i+1])-'a'+10;
-        t2 = isdigit(url[i+2]) ? url[i+2]-'0' : tolower(url[i+2])-'a'+10;
-        decode.append(1, t1 << 4 | t2);
-        i += 2;
-      }
-    } else {
-      decode.append(1, url[i]);
-    }
-  }
-
-  return decode;
-}
-
-/*
-  function to parse an url string
-*/
-GME_Url_Struct GME_NetwParseUrl(const char* url_str)
-{
-  GME_Url_Struct url;
-
-  std::string str = GME_NetwEncodeUrl(url_str);
-
-  size_t prot_p, host_p, port_p, path_p, file_p;
-  std::string prot, host, path, port, file;
-
-  prot_p = str.find("://", 0);
-  if(prot_p == std::string::npos) {
-    host_p = 0;
-    port_p = str.find_first_of(":", host_p);
-    path_p = str.find_first_of("/", host_p);
-    file_p = str.find_last_of("/", -1);
-  } else {
-    host_p = prot_p + 3;
-    port_p = str.find_first_of(":", host_p);
-    path_p = str.find_first_of("/", host_p);
-    file_p = str.find_last_of("/", -1);
-  }
-
-  memset(&url, 0, sizeof(GME_Url_Struct));
-
-  if(prot_p != std::string::npos) {
-    prot = str.substr(0, prot_p);
-    GME_StrToLower(prot);
-  }
-
-  if(port_p != std::string::npos) {
-    host = str.substr(host_p, port_p-host_p);
-    port = str.substr(port_p+1, (path_p-port_p)-1);
-  } else {
-    host = str.substr(host_p, path_p-host_p);
-  }
-
-  if(path_p != std::string::npos) {
-    path = str.substr(path_p, str.size());
-  } else {
-    path = "/";
-  }
-
-  if(file_p != std::string::npos) {
-    file = str.substr(file_p+1, str.size());
-  }
-
-  /* try to deduct port from protocol */
-  if(port.empty() && !prot.empty()) {
-    if(prot == "http") port = "80";
-    if(prot == "ftp") port = "21";
-  }
-
-  /* try to deduct protocol from port */
-  if(prot.empty() && !port.empty()) {
-    if(port == "80") prot = "http";
-    if(port == "21") prot = "ftp";
-  }
-
-  /* set to default if nothing was deducted */
-  if(prot.empty()) prot = "http";
-  if(port.empty()) port = "80";
-
-  strcpy(url.prot, prot.c_str());
-  strcpy(url.host, host.c_str());
-  strcpy(url.port, port.c_str());
-  strcpy(url.path, path.c_str());
-  if(!file.empty()) strcpy(url.file, file.c_str());
-
-  return url;
-}
-
-
 /*
   function to check if string appear as valid url
 */
 bool GME_NetwIsUrl(const char* str)
 {
-  GME_Url_Struct url = GME_NetwParseUrl(str);
-  if(!strlen(url.host)) return false;
-  if(!strchr(url.host, '.')) return false;
-  return true;
+  bool res = true;
+  URL_COMPONENTS urlComponents;
+  memset(&urlComponents, 0, sizeof(urlComponents));
+  urlComponents.dwStructSize = sizeof(urlComponents);
+  urlComponents.dwUserNameLength = 1;
+  urlComponents.dwPasswordLength = 1;
+  urlComponents.dwHostNameLength = 1;
+  urlComponents.dwUrlPathLength = 1;
+
+
+  int sz = strlen(str) + 1;
+  wchar_t *lpwurl = new wchar_t[sz];
+  mbstowcs(lpwurl, str, sz);
+
+  if (!WinHttpCrackUrl(lpwurl, 0, 0, &urlComponents))
+  {
+    res = false;
+  }
+  delete[] lpwurl;
+  return res;
 }
 
 
-/*
-  function to get sockaddr from host and port string
-*/
-bool GME_NetwGetIp4(const char* host, const char* port, sockaddr* saddr)
+class CQuickStringWrap
 {
-  /* check if we got an fqdn name or an ip string */
-  addrinfo* result = NULL;
-  int error  = getaddrinfo(host, port, NULL, &result);
-  if(0 != error) {
-    GME_Logs(GME_LOG_WARNING, "GME_NetwGetIp4", "Unable to resolve host", host);
-    return false;
-  }
-  memcpy(saddr, result->ai_addr, sizeof(sockaddr));
-  freeaddrinfo(result);
-  return true;
-}
+  LPWSTR _szAlloc;
 
-/*
-  function to open a new socket and connection
-*/
-SOCKET GME_NetwConnect(sockaddr* saddr)
-{
-  SOCKET sock;
-
-  sock = socket(AF_INET, SOCK_STREAM, 0);
-  if(sock == INVALID_SOCKET) {
-    GME_Logs(GME_LOG_ERROR, "GME_NetwConnect", "Unable to open new socket", "== INVALID_SOCKET");
-    return INVALID_SOCKET;
+public:
+  CQuickStringWrap()
+  {
+    _szAlloc = NULL;
   }
 
-  if(0 != connect(sock, saddr, sizeof(sockaddr))) {
-    GME_Logs(GME_LOG_ERROR, "GME_NetwConnect", "Unable to connect to host", "");
-    closesocket(sock);
-    return INVALID_SOCKET;
+  ~CQuickStringWrap()
+  {
+    if (_szAlloc != NULL)
+      delete[] _szAlloc;
   }
 
-  return sock;
-}
+  operator LPCWSTR() const { return _szAlloc; }
 
+  BOOL Set(LPCWSTR szIn, DWORD dwLen)
+  {
+    LPWSTR szNew;
 
-/*
-  function to parse HTTP response header
-*/
-GME_Http_Head_Struct GME_NetwHttpParseHead(const char* recv_buff, size_t recv_size)
-{
-  GME_Http_Head_Struct header;
-  std::vector<std::string> head_entry;
+    szNew = new WCHAR[dwLen + 1];
 
-  /* copy in a new buffer to make a string */
-  char *cstr = NULL;
-  try {
-    cstr = new char[recv_size+1];
-  } catch(const std::bad_alloc&) {
-    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpParseHead", "Bad alloc", std::to_string(recv_size+1).c_str());
-    return header;
-  }
-  if(cstr == NULL) {
-    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpParseHead", "Bad alloc (* == NULL)", std::to_string(recv_size+1).c_str());
-    return header;
-  }
-  memcpy(cstr, recv_buff, recv_size);
-  cstr[recv_size] = '\0';
-  std::string recv_str = cstr;
-  delete[] cstr;
-
-  memset(&header, 0, sizeof(GME_Http_Head_Struct));
-
-  /* get the status code... it is after "HTTP/1.1 " */
-  header.code = strtol(recv_str.substr(9, 3).c_str(), NULL, 10);
-  if(header.code == 0L) {
-    /* we got a problem... */
-    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpParseHead", "Invalid response code", "0L");
-    return header;
-  }
-
-  /* find the size of the header, we check the double CRLF */
-  header.size = recv_str.find("\r\n\r\n");
-  if(header.size == std::string::npos) {
-    /* we got a problem... */
-    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpParseHead", "Unable to get header size", "CRLF missing ?");
-    header.size = 0;
-    return header;
-  }
-
-  /* split header into substrings */
-  GME_StrSplit(recv_str.substr(0, header.size), &head_entry, "\n");
-
-  /* search for "Content-Length:" header and parse */
-  for(unsigned i = 0; i < head_entry.size(); i++) {
-    if(head_entry[i].find("Content-Length") != std::string::npos) {
-      size_t p = head_entry[i].find_first_of(':', 0) + 2;
-      size_t s = head_entry[i].find_first_of('\r', 0) - p;
-      header.content_length = strtoul(head_entry[i].substr(p, s).c_str(), NULL, 10);
+    if (szNew == NULL)
+    {
+      SetLastError(ERROR_OUTOFMEMORY);
+      return FALSE;
     }
+
+    memcpy(szNew, szIn, dwLen * sizeof(WCHAR));
+    szNew[dwLen] = L'\0';
+
+    if (_szAlloc != NULL)
+      delete[] _szAlloc;
+
+    _szAlloc = szNew;
+
+    return TRUE;
   }
-
-  /* check if we got a redirection */
-  if(header.code == 301 || header.code == 302) {
-
-    /* search for "Location:" header and parse */
-    for(unsigned i = 0; i < head_entry.size(); i++) {
-      if(head_entry[i].find("Location") != std::string::npos) {
-        size_t p = head_entry[i].find_first_of(':', 0) + 2;
-        size_t s = head_entry[i].find_first_of('\r', 0) - p;
-        strcpy(header.location, head_entry[i].substr(p, s).c_str());
-      }
-    }
-    return header;
-  }
-
-  /* search for "Content-Type:" header and parse */
-  for(unsigned i = 0; i < head_entry.size(); i++) {
-    if(head_entry[i].find("Content-Type") != std::string::npos) {
-      size_t p = head_entry[i].find_first_of(':', 0) + 2;
-      size_t s = head_entry[i].find_first_of('\r', 0) - p;
-      strcpy(header.content_type, head_entry[i].substr(p, s).c_str());
-    }
-  }
-
-  /* search for "Transfer-Encoding:" header and parse */
-  for(unsigned i = 0; i < head_entry.size(); i++) {
-    if(head_entry[i].find("Transfer-Encoding") != std::string::npos) {
-      size_t p = head_entry[i].find_first_of(':', 0) + 2;
-      size_t s = head_entry[i].find_first_of('\r', 0) - p;
-      strcpy(header.transfer_encoding, head_entry[i].substr(p, s).c_str());
-    }
-  }
-
-  return header;
-}
+};
 
 /*
   function to send GET Http request to a server.
 */
 int GME_NetwHttpGET(const char* url_str, const GME_NetwGETOnErr on_err, const GME_NetwGETOnDnl on_dnl, const GME_NetwGETOnEnd on_end)
 {
-  WSADATA wsa;
-  WSAStartup(MAKEWORD(2,2),&wsa);
+  static const int buf_size = 4096;
+  int retval = 0;
+  URL_COMPONENTS urlComponents;
+  CQuickStringWrap strTargetServer;
+  CQuickStringWrap strTargetPath;
+  CQuickStringWrap strTargetUsername;
+  CQuickStringWrap strTargetPassword;
+  HINTERNET hSession = NULL;
+  HINTERNET hConnect = NULL;
+  HINTERNET hRequest = NULL;
+  DWORD statuscode;
+  DWORD hbufsize;
+  unsigned long long content_length;
+  clock_t t; /* start clock for download speed */
+  std::vector<char> body_data;
+  DWORD dwSize = 0;
+  DWORD dwDownloaded = 0;
+  DWORD body_size = 0;
+  char *pszOutBuffer = NULL;
 
-  /* parse url */
-  GME_Url_Struct url = GME_NetwParseUrl(url_str);
 
-  GME_Logs(GME_LOG_NOTICE, "GME_NetwHttpGET", "Connecting to host", url.host);
+  memset(&urlComponents, 0, sizeof(urlComponents));
+  urlComponents.dwStructSize = sizeof(urlComponents);
+  urlComponents.dwUserNameLength = 1;
+  urlComponents.dwPasswordLength = 1;
+  urlComponents.dwHostNameLength = 1;
+  urlComponents.dwUrlPathLength = 1;
+  
 
-  /* get host address for connection infos */
-  sockaddr saddr;
-  if(!GME_NetwGetIp4(url.host, url.port, &saddr)) {
-    WSACleanup();
-    if(on_err) on_err(url_str);
+  int sz = strlen(url_str) + 1;
+  wchar_t *lpwurl = new wchar_t[sz];
+  mbstowcs(lpwurl, url_str, sz);
+
+  if (!WinHttpCrackUrl(lpwurl, 0, 0, &urlComponents))
+  {
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Unable to parse URL", url_str);
+    return GME_HTTPGET_ERR_DNS;
+  }
+  
+
+  if (!strTargetServer.Set(urlComponents.lpszHostName, urlComponents.dwHostNameLength)
+    || !strTargetPath.Set(urlComponents.lpszUrlPath, urlComponents.dwUrlPathLength))
+  {
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Unable to set URL fields", url_str);
+  return GME_HTTPGET_ERR_DNS;
+  }
+
+  if (urlComponents.dwUserNameLength != 0
+    && !strTargetUsername.Set(urlComponents.lpszUserName, urlComponents.dwUserNameLength))
+  {
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Unable to set UserName field", url_str);
     return GME_HTTPGET_ERR_DNS;
   }
 
-  /* open a new connection */
-  SOCKET sock;
-  if((sock = GME_NetwConnect(&saddr)) == INVALID_SOCKET) {
-    WSACleanup();
-    if(on_err) on_err(url_str);
-    return GME_HTTPGET_ERR_CNX;
+  if (urlComponents.dwPasswordLength != 0
+    && !strTargetPassword.Set(urlComponents.lpszPassword, urlComponents.dwPasswordLength))
+  {
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Unable to set Password field", url_str);
+    return GME_HTTPGET_ERR_DNS;
   }
 
-  /* create HTTP request */
-  char http_req[256];
-  if(strlen(url.path)) {
-    sprintf(http_req, "GET %s HTTP/1.1\r\nHost: %s \r\n\r\n", url.path, url.host);
-  } else {
-    sprintf(http_req, "GET / HTTP/1.1\r\nHost: %s \r\n\r\n", url.host);
+
+  GME_Logs(GME_LOG_NOTICE, "GME_NetwHttpGET", "Connecting to host", url_str);
+  hSession = WinHttpOpen(L"OVGME", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, NULL, NULL, 0);
+  if (hSession == NULL)
+  {
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Unable to open session", url_str);
+    retval = GME_HTTPGET_ERR_CNX;
+    goto _out;
+
   }
 
-  /* send request to server */
-  send(sock, http_req, strlen(http_req), 0);
-
-  /* stuff to receive data */
-  char recv_buff[4096];
-  int recv_size;
-
-  /* receiving HTTP response (or not) */
-  recv_size = recv(sock, recv_buff, sizeof(recv_buff), 0);
-  if(recv_size == SOCKET_ERROR || recv_size == 0) {
-    /* stream error... */
-    closesocket(sock); WSACleanup();
-    if(on_err) on_err(url_str);
-    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "HTTP parse header", "recv failed");
-    return GME_HTTPGET_ERR_REC;
+  hConnect = WinHttpConnect(hSession, strTargetServer, urlComponents.nPort, 0);
+  if (hConnect == NULL)
+  {
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Unable to open connection", url_str);
+    retval = GME_HTTPGET_ERR_CNX;
+    goto _out;
   }
 
-  /* parse HTTP response header */
-  GME_Http_Head_Struct header = GME_NetwHttpParseHead(recv_buff, recv_size);
+  
+  hRequest = WinHttpOpenRequest(hConnect, L"GET", strTargetPath, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+    urlComponents.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0);
 
-  if(header.code > 302) {
-    /* this is a 404 or any HTTP server error... */
-    closesocket(sock); WSACleanup();
-    if(on_err) on_err(url_str);
-    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "HTTP parse header", "HTTP code greater than 302");
-    return header.code;
+  BOOL bDone;
+  bDone = FALSE;
+  if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, NULL, 0, 0, 0))
+  {
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Error in sending request", url_str);
+    retval = GME_HTTPGET_ERR_REC;
+    goto _out;
+  }
+  
+  // End the request.
+  if (!WinHttpReceiveResponse(hRequest, NULL))
+  {
+    DWORD le = GetLastError();
+    char errstr[16];
+    snprintf(errstr, sizeof(errstr), "%u", le);
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Error in sending request", errstr);
+    retval = GME_HTTPGET_ERR_REC;
+    goto _out;
   }
 
-  if(header.code == 301 || header.code == 302) {
-    /* this is a redirection, we must send a new request */
-    closesocket(sock); WSACleanup();
-    GME_Logs(GME_LOG_NOTICE, "GME_NetwHttpGET", "HTTP parse header", "redirection");
-    return GME_NetwHttpGET(header.location, on_err, on_dnl, on_end);
+  wchar_t hbuf[256];
+
+  statuscode = 0;
+  hbufsize = sizeof(statuscode);
+  if (!WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+    WINHTTP_HEADER_NAME_BY_INDEX, &statuscode,
+    &hbufsize, WINHTTP_NO_HEADER_INDEX))
+  {
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Error in reading request status", url_str);
+    retval = GME_HTTPGET_ERR_REC;
+    goto _out;
   }
+
+  switch (statuscode)
+  {
+  case HTTP_STATUS_REDIRECT:
+  {
+    hbufsize = sizeof(hbuf);
+    if (!WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_LOCATION,
+      WINHTTP_HEADER_NAME_BY_INDEX, &statuscode,
+      &hbufsize, WINHTTP_NO_HEADER_INDEX))
+    {
+      GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Error in reading redirect location", url_str);
+      retval = GME_HTTPGET_ERR_REC;
+      goto _out;
+    }
+    int sz = wcslen(hbuf) + 1;
+    char *newurl = new char[sz];
+    wcstombs(newurl, hbuf, sz);
+    retval = GME_NetwHttpGET(newurl, on_err, on_dnl, on_end);
+    delete[] newurl;
+    goto _out;
+  }
+
+  case HTTP_STATUS_OK:
+  case HTTP_STATUS_PARTIAL_CONTENT:
+    break;
+
+  default:
+  {
+    char errstr[16];
+    snprintf(errstr, sizeof(errstr), "%x", statuscode);
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", " HTTP Error", errstr);
+    retval = GME_HTTPGET_ERR_REC;
+    goto _out;
+  }
+
+  }
+
+  hbufsize = sizeof(hbuf);
+  if (!WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_CONTENT_LENGTH,
+    WINHTTP_HEADER_NAME_BY_INDEX, hbuf,
+    &hbufsize, WINHTTP_NO_HEADER_INDEX))
+  {
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Error in reading hedaers", url_str);
+    retval = GME_HTTPGET_ERR_REC;
+    goto _out;
+  }
+  content_length = _wcstoui64(hbuf, NULL, 10);
 
   GME_Logs(GME_LOG_NOTICE, "GME_NetwHttpGET", "Body download", url_str);
+  
+  t = clock(); /* start clock for download speed */
+  dwSize = 0;
+  dwDownloaded = 0;
+  body_size = 0;
+  pszOutBuffer = new char[buf_size];
+  if (!pszOutBuffer)
+  {
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Out of memory", url_str);
+    retval = GME_HTTPGET_ERR_REC;
+    goto _out;
+  }
 
-  if(!header.content_length) {
-    /* check if we get a transfer encoding chunked */
-    if(strstr(header.transfer_encoding, "chunked")) {
-
-      clock_t t = clock(); /* start clock for download speed */
-
-      int pct, bps;
-      unsigned p;
-      char chunk_chrs[128];
-      size_t chunk_size;
-      size_t chunk_recv;
-      char* data_p = &recv_buff[header.size+4];
-      recv_size -= (header.size+4);
-
-      /* the buffer */
-      std::vector<char> body_data;
-
-      // get first chunk size
-      for(p = 0; *data_p != '\r'; p++, data_p++, recv_size--) {
-        chunk_chrs[p] = *data_p;
-      }
-      data_p+=2; recv_size-=2; // CRLF
-      chunk_chrs[p] = 0;
-      chunk_size = strtol(chunk_chrs, NULL, 16);
-      chunk_recv = 0;
-
-      do { /* for each chunk */
-
-        if(on_dnl) {
-          pct = 0; /* percentage can't be quantified in chunked transfer */
-          bps = float(body_data.size())/(float(clock()-t)/CLOCKS_PER_SEC);
-          if(!on_dnl(pct, bps)) {
-            closesocket(sock); WSACleanup();
-            GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Chunked transfer", "Cancelled by user");
-            return 0; // cancelled
-          }
-        }
-
-        do { /* copy chunk data */
-          do { /* copy while data available in current buffer */
-            body_data.push_back(*data_p);
-            chunk_recv++; recv_size--; data_p++;
-          } while(recv_size && chunk_recv < chunk_size);
-
-          if(!recv_size) { /* get new data if needed */
-            recv_size = recv(sock, recv_buff, sizeof(recv_buff), 0);
-            if(recv_size == SOCKET_ERROR || recv_size == 0) {
-              /* stream error... */
-              closesocket(sock); WSACleanup();
-              if(on_err) on_err(url_str);
-              GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Chunked transfer", "recv failed");
-              return GME_HTTPGET_ERR_REC;
-            }
-            data_p = recv_buff;
-          }
-
-        } while(chunk_recv < chunk_size);
-
-        /* begin a new chunk */
-        data_p+=2; recv_size-=2; // CRLF
-
-        if(!recv_size) { /* get new data if needed */
-          recv_size = recv(sock, recv_buff, sizeof(recv_buff), 0);
-          if(recv_size == SOCKET_ERROR || recv_size == 0) {
-            /* stream error... */
-            closesocket(sock); WSACleanup();
-            if(on_err) on_err(url_str);
-            GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Chunked transfer", "recv failed");
-            return GME_HTTPGET_ERR_REC;
-          }
-          data_p = recv_buff;
-        }
-
-        // get chunk size
-        for(p = 0; *data_p != '\r'; p++, data_p++, recv_size--) {
-          chunk_chrs[p] = *data_p;
-        }
-        data_p+=2; recv_size-=2; // CRLF
-        chunk_chrs[p] = 0;
-        chunk_size = strtol(chunk_chrs, NULL, 16);
-        chunk_recv = 0;
-
-      } while(chunk_size);
-
-      closesocket(sock); WSACleanup();
-      if(on_end) on_end((char*)body_data.data(), body_data.size());
-      GME_Logs(GME_LOG_NOTICE, "GME_NetwHttpGET", "Chunked transfer", "Done");
-      return 0; // success
-
+  do {
+    if (!WinHttpQueryDataAvailable(hRequest, &dwSize))
+    {
+      DWORD le = GetLastError();
+      char errstr[16];
+      snprintf(errstr, sizeof(errstr), "%u", le);
+      GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Error in query data", errstr);
+      retval = GME_HTTPGET_ERR_REC;
+      goto _out;
     }
-    closesocket(sock); WSACleanup();
-    if(on_err) on_err(url_str);
-    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Init transfer", "Unsupported transfer encoding");
-    return GME_HTTPGET_ERR_ENC;
-  }
 
-  /* we begin download */
-  int pct, bps;
-  size_t body_size = 0;
-  char* body_data = NULL;
-  clock_t t = clock(); /* start clock for download speed */
+	if (dwSize > 0)
+	{
+      if (dwSize > buf_size)
+        dwSize = buf_size;
 
-  /* alloc memory safely... VERY safely */
-  try {
-    body_data = new char[header.content_length];
-  } catch(const std::bad_alloc&) {
-    closesocket(sock); WSACleanup();
-    if(on_err) on_err(url_str);
-    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Data transfer Bad alloc", std::to_string(header.content_length).c_str());
-    return GME_HTTPGET_ERR_BAL;
-  }
-  if(body_data == NULL) {
-    closesocket(sock); WSACleanup();
-    if(on_err) on_err(url_str);
-    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Data transfer Bad alloc (* == NULL)", std::to_string(header.content_length).c_str());
-    return GME_HTTPGET_ERR_BAL;
-  }
-  /* first part of body received with header */
-  recv_size -= (header.size+4);
-  if(recv_size) memcpy(body_data, &recv_buff[header.size+4], recv_size);
-  body_size += recv_size;
-
-  if(on_dnl) {
-    pct = (float(body_size)/float(header.content_length))*100;
-    bps = float(body_size)/(float(clock()-t)/CLOCKS_PER_SEC);
-    if(!on_dnl(pct, bps)) {
-      closesocket(sock); WSACleanup();
-      delete[] body_data;
-      GME_Logs(GME_LOG_NOTICE, "GME_NetwHttpGET", "Body download", "Canceled by user");
-      return 0; // cancelled
-    }
-  }
-
-  /* do we have more data to receive ? */
-  if(header.content_length > body_size) {
-
-    do {
-      /* receive bunch of data */
-      recv_size = recv(sock, recv_buff, sizeof(recv_buff), 0);
-      if(recv_size == SOCKET_ERROR || recv_size == 0) {
-        /* stream error... */
-        closesocket(sock); WSACleanup();
-        delete[] body_data;
-        if(on_err) on_err(url_str);
-        GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Body download", "recv failed");
-        return GME_HTTPGET_ERR_REC;
-      }
-      memcpy(body_data+body_size, recv_buff, recv_size);
-      body_size += recv_size;
-
-      if(on_dnl) {
-        pct = (float(body_size)/float(header.content_length))*100;
-        bps = float(body_size)/(float(clock()-t)/CLOCKS_PER_SEC);
-        if(!on_dnl(pct, bps)) {
-          closesocket(sock); WSACleanup();
-          delete[] body_data;
-          GME_Logs(GME_LOG_WARNING, "GME_NetwHttpGET", "Body download", "Canceled by user");
-          return 0; // cancelled
+      body_size += dwSize;
+      if (on_dnl) {
+        int pct = (int)(100LL * body_size / content_length);
+        clock_t deltat = clock() - t;
+        if (deltat == 0)
+          deltat = 1;
+        int bps = (long long)CLOCKS_PER_SEC * body_size / deltat;
+        if (!on_dnl(pct, bps)) {
+          GME_Logs(GME_LOG_NOTICE, "GME_NetwHttpGET", "Body download", "Canceled by user");
+          retval = 0; // cancelled
+          goto _out;
         }
       }
-    } while(body_size < header.content_length);
-  }
 
-  /* download successful */
-  closesocket(sock); WSACleanup();
+      if (!WinHttpReadData(hRequest, (LPVOID)pszOutBuffer, dwSize, &dwDownloaded))
+      {
+        GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Error in reading data", url_str);
+        retval = GME_HTTPGET_ERR_REC;
+        goto _out;
+      }
 
-  /* send data to callback */
-  if(on_end) on_end(body_data, body_size);
-  delete[] body_data;
+      body_data.insert(body_data.end(), pszOutBuffer, pszOutBuffer + dwSize);
+    }
+  } while (dwSize > 0);
+  delete[] pszOutBuffer;
+  WinHttpCloseHandle(hRequest);
+  WinHttpCloseHandle(hConnect);
+  WinHttpCloseHandle(hSession);
+  delete[] lpwurl;
+
+  if (on_end) on_end(body_data.data(), body_data.size());
 
   return 0; // success
+
+_out:
+  if (pszOutBuffer != NULL)
+    delete[] pszOutBuffer;
+
+  if (hRequest != NULL)
+    WinHttpCloseHandle(hRequest);
+
+  if (hConnect != NULL)
+    WinHttpCloseHandle(hConnect);
+
+  if (hSession != NULL)
+    WinHttpCloseHandle(hSession);
+
+  delete[] lpwurl;
+
+  if (on_err) on_err(url_str);
+
+  return retval;
 }
 
 
@@ -649,174 +454,309 @@ int GME_NetwHttpGET(const char* url_str, const GME_NetwGETOnErr on_err, const GM
 */
 int GME_NetwHttpGET(const char* url_str, const GME_NetwGETOnErr on_err, const GME_NetwGETOnDnl on_dnl, const GME_NetwGETOnSav on_sav, const std::wstring& path)
 {
-  WSADATA wsa;
-  WSAStartup(MAKEWORD(2,2),&wsa);
+  static const int buf_size = 65536;
+  int retval = 0;
+  URL_COMPONENTS urlComponents;
+  CQuickStringWrap strTargetServer;
+  CQuickStringWrap strTargetPath;
+  CQuickStringWrap strTargetUsername;
+  CQuickStringWrap strTargetPassword;
+  HINTERNET hSession = NULL;
+  HINTERNET hConnect = NULL;
+  HINTERNET hRequest = NULL;
+  DWORD statuscode;
+  DWORD hbufsize;
+  unsigned long long content_length;
+  clock_t t; /* start clock for download speed */
+  DWORD dwSize = 0;
+  DWORD dwDownloaded = 0;
+  DWORD body_size = 0;
+  std::wstring file_path;
+  FILE* fp = NULL;
+  char *pszOutBuffer = NULL;
+  wchar_t *fname = NULL;
 
-  /* parse url */
-  GME_Url_Struct url = GME_NetwParseUrl(url_str);
+  memset(&urlComponents, 0, sizeof(urlComponents));
+  urlComponents.dwStructSize = sizeof(urlComponents);
+  urlComponents.dwUserNameLength = 1;
+  urlComponents.dwPasswordLength = 1;
+  urlComponents.dwHostNameLength = 1;
+  urlComponents.dwUrlPathLength = 1;
 
-  GME_Logs(GME_LOG_NOTICE, "GME_NetwHttpGET", "Connecting to host", url.host);
 
-  /* get host address for connection infos */
-  sockaddr saddr;
-  if(!GME_NetwGetIp4(url.host, url.port, &saddr)) {
-    WSACleanup();
-    if(on_err) on_err(url_str);
+  int sz = strlen(url_str) + 1;
+  wchar_t *lpwurl = new wchar_t[sz];
+  mbstowcs(lpwurl, url_str, sz);
+
+  if (!WinHttpCrackUrl(lpwurl, 0, 0, &urlComponents))
+  {
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Unable to parse URL", url_str);
     return GME_HTTPGET_ERR_DNS;
   }
 
-  /* open a new connection */
-  SOCKET sock;
-  if((sock = GME_NetwConnect(&saddr)) == INVALID_SOCKET) {
-    WSACleanup();
-    if(on_err) on_err(url_str);
-    return GME_HTTPGET_ERR_CNX;
+  if (!strTargetServer.Set(urlComponents.lpszHostName, urlComponents.dwHostNameLength)
+    || !strTargetPath.Set(urlComponents.lpszUrlPath, urlComponents.dwUrlPathLength))
+  {
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Unable to set URL fields", url_str);
+    return GME_HTTPGET_ERR_DNS;
   }
 
-  /* create HTTP request */
-  char http_req[256];
-  if(strlen(url.path)) {
-    sprintf(http_req, "GET %s HTTP/1.1\r\nHost: %s \r\n\r\n", url.path, url.host);
-  } else {
-    sprintf(http_req, "GET / HTTP/1.1\r\nHost: %s \r\n\r\n", url.host);
+  if (urlComponents.dwUserNameLength != 0
+    && !strTargetUsername.Set(urlComponents.lpszUserName, urlComponents.dwUserNameLength))
+  {
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Unable to set UserName field", url_str);
+    return GME_HTTPGET_ERR_DNS;
   }
 
-  /* send request to server */
-  send(sock, http_req, strlen(http_req), 0);
-
-  /* stuff to receive data */
-  char recv_buff[4096];
-  int recv_size;
-
-  /* receiving HTTP response (or not) */
-  recv_size = recv(sock, recv_buff, sizeof(recv_buff), 0);
-  if(recv_size == SOCKET_ERROR || recv_size == 0) {
-    /* stream error... */
-    closesocket(sock); WSACleanup();
-    if(on_err) on_err(url_str);
-    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "HTTP parse header", "recv failed");
-    return GME_HTTPGET_ERR_REC;
+  if (urlComponents.dwPasswordLength != 0
+    && !strTargetPassword.Set(urlComponents.lpszPassword, urlComponents.dwPasswordLength))
+  {
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Unable to set Password field", url_str);
+    return GME_HTTPGET_ERR_DNS;
   }
 
-  /* parse HTTP response header */
-  GME_Http_Head_Struct header = GME_NetwHttpParseHead(recv_buff, recv_size);
 
-  if(header.code > 302) {
-    /* this is a 404 or any HTTP server error... */
-    closesocket(sock); WSACleanup();
-    if(on_err) on_err(url_str);
-    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "HTTP parse header", "HTTP code greater than 302");
-    return header.code;
+  GME_Logs(GME_LOG_NOTICE, "GME_NetwHttpGET", "Connecting to host", url_str);
+  hSession = WinHttpOpen(L"OVGME", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, NULL, NULL, 0);
+  if (hSession == NULL)
+  {
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Unable to open session", url_str);
+    retval = GME_HTTPGET_ERR_CNX;
+    goto _out;
   }
 
-  if(header.code == 301 || header.code == 302) {
-    /* this is a redirection, we must send a new request */
-    closesocket(sock); WSACleanup();
-    GME_Logs(GME_LOG_NOTICE, "GME_NetwHttpGET", "HTTP parse header", "redirection");
-    return GME_NetwHttpGET(header.location, on_err, on_dnl, on_sav, path);
+  hConnect = WinHttpConnect(hSession, strTargetServer, urlComponents.nPort, 0);
+  if (hConnect == NULL)
+  {
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Unable to open connection", url_str);
+    retval = GME_HTTPGET_ERR_CNX;
+    goto _out;
   }
 
-  if(!header.content_length) {
-    /* check if we get a transfer encoding chunked */
-    if(strstr(header.transfer_encoding, "chunked")) {
-      /* this is some PHP page with chuck encoding, not supported */
+
+  hRequest = WinHttpOpenRequest(hConnect, L"GET", strTargetPath, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+    urlComponents.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0);
+
+  BOOL bDone;
+  bDone = FALSE;
+  if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, NULL, 0, 0, 0))
+  {
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Error in sending request", url_str);
+    retval = GME_HTTPGET_ERR_REC;
+    goto _out;
+  }
+
+  // End the request.
+  if (!WinHttpReceiveResponse(hRequest, NULL))
+  {
+    DWORD le = GetLastError();
+    char errstr[16];
+    snprintf(errstr, sizeof(errstr), "%u", le);
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Error in sending request", errstr);
+    retval = GME_HTTPGET_ERR_REC;
+    goto _out;
+  }
+
+  wchar_t hbuf[256];
+
+  statuscode = 0;
+  hbufsize = sizeof(statuscode);
+  if (!WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+    WINHTTP_HEADER_NAME_BY_INDEX, &statuscode,
+    &hbufsize, WINHTTP_NO_HEADER_INDEX))
+  {
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Error in reading request status", url_str);
+    retval = GME_HTTPGET_ERR_REC;
+    goto _out;
+  }
+
+  switch (statuscode)
+  {
+  case HTTP_STATUS_REDIRECT:
+  {
+    hbufsize = sizeof(hbuf);
+    if (!WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_LOCATION,
+      WINHTTP_HEADER_NAME_BY_INDEX, &statuscode,
+      &hbufsize, WINHTTP_NO_HEADER_INDEX))
+    {
+      GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Error in reading redirect location", url_str);
+      retval = GME_HTTPGET_ERR_REC;
+      goto _out;
     }
-    closesocket(sock); WSACleanup();
-    if(on_err) on_err(url_str);
-    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Init transfer", "Unsupported transfer encoding");
-    return GME_HTTPGET_ERR_ENC;
+    int sz = wcslen(hbuf) + 1;
+    char *newurl = new char[sz];
+    wcstombs(newurl, hbuf, sz);
+    retval = GME_NetwHttpGET(newurl, on_err, on_dnl, on_sav, path);
+    delete[] newurl;
+    goto _out;
   }
+
+  case HTTP_STATUS_OK:
+  case HTTP_STATUS_PARTIAL_CONTENT:
+    break;
+
+  default:
+  {
+    char errstr[16];
+    snprintf(errstr, sizeof(errstr), "%x", statuscode);
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", " HTTP Error", errstr);
+    retval = GME_HTTPGET_ERR_REC;
+    goto _out;
+  }
+  }
+
+  fname = NULL;
+  hbufsize = sizeof(hbuf);
+  if (WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_CONTENT_DISPOSITION,
+      WINHTTP_HEADER_NAME_BY_INDEX, hbuf,
+      &hbufsize, WINHTTP_NO_HEADER_INDEX))
+  {
+    fname = wcsstr(hbuf, L"filename=\"") + 10;
+    if (fname)
+    {
+      wchar_t *fname_end = wcsstr(fname, L"\"");
+      if (!fname_end)
+      {
+        GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", " Wrong filename in content disposition", url_str);
+        retval = GME_HTTPGET_ERR_REC;
+        goto _out;
+      }
+      *fname_end = (wchar_t)0;
+    }
+  }
+
+  if (fname == NULL)
+  {
+    wchar_t *fname_end = lpwurl + wcslen(lpwurl);
+    fname = fname_end;
+    wchar_t *cur = fname;
+    while (cur >= lpwurl)
+    {
+	    if (*cur == L'?') 
+		    fname_end = cur;
+	    else if (*cur == L'/') 
+		    break;
+	    fname = cur;
+	    cur--;
+    }
+    *fname_end = (wchar_t)0;
+  }
+
+  hbufsize = sizeof(hbuf);
+  if (!WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_CONTENT_LENGTH,
+    WINHTTP_HEADER_NAME_BY_INDEX, hbuf,
+    &hbufsize, WINHTTP_NO_HEADER_INDEX))
+  {
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Error in reading hedaers", url_str);
+    retval = GME_HTTPGET_ERR_REC;
+    goto _out;
+  }
+  content_length = _wcstoui64(hbuf, NULL, 10);
 
   GME_Logs(GME_LOG_NOTICE, "GME_NetwHttpGET", "Body download", url_str);
 
-  /* we begin download */
-  int pct, bps;
-  size_t body_size = 0;
-  clock_t t = clock(); /* start clock for download speed */
-
   /* open temporary file for writing */
-  std::wstring file_path = path + L"\\";
-  //file_path += GME_StrToWcs(GME_NetwDecodeUrl(url.file));
-  file_path += GME_StrToWcs(url.file);
+  file_path = path + L"\\";
+  file_path += fname;
   file_path += L".down";
 
-  FILE* fp = _wfopen(file_path.c_str(), L"wb");
-  if(!fp) {
-    closesocket(sock); WSACleanup();
-    if(on_err) on_err(url_str);
+  fp = _wfopen(file_path.c_str(), L"w+b");
+  if (!fp) {
     GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Body download open error", GME_StrToMbs(file_path).c_str());
-    return GME_HTTPGET_ERR_FOP;
+    retval = GME_HTTPGET_ERR_FOP;
+  goto _out;
   }
 
-  /* first part of body received with header */
-  recv_size -= (header.size+4);
-  if(recv_size) {
-    if(fwrite(&recv_buff[header.size+4], 1, recv_size, fp) != recv_size) {
-      closesocket(sock); WSACleanup();
-      fclose(fp); GME_FileDelete(file_path);
-      if(on_err) on_err(url_str);
-      GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Body download write error", GME_StrToMbs(file_path).c_str());
-      return GME_HTTPGET_ERR_FWR;
+  t = clock(); /* start clock for download speed */
+  dwSize = 0;
+  dwDownloaded = 0;
+  body_size = 0;
+  pszOutBuffer = new char[buf_size];
+  if (!pszOutBuffer)
+  {
+    GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Out of memory", url_str);
+    retval = GME_HTTPGET_ERR_REC;
+    goto _out;
+  }
+
+  do {
+    if (!WinHttpQueryDataAvailable(hRequest, &dwSize))
+    {
+      DWORD le = GetLastError();
+      char errstr[16];
+      snprintf(errstr, sizeof(errstr), "%u", le);
+      GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Error in query data", errstr);
+      retval = GME_HTTPGET_ERR_REC;
+      goto _out;
     }
-  }
-  body_size += recv_size;
 
-  if(on_dnl) {
-    pct = (float(body_size)/float(header.content_length))*100;
-    bps = float(body_size)/(float(clock()-t)/CLOCKS_PER_SEC);
-    if(!on_dnl(pct, bps)) {
-      closesocket(sock); WSACleanup();
-      fclose(fp); GME_FileDelete(file_path);
-      GME_Logs(GME_LOG_WARNING, "GME_NetwHttpGET", "Body download", "Canceled by user");
-      return 0; // cancelled
-    }
-  }
+    if (dwSize > 0)
+    {
+      if (dwSize > buf_size)
+        dwSize = buf_size;
 
-  /* do we have more data to receive ? */
-  if(header.content_length > body_size) {
-
-    do {
-      /* receive bunch of data */
-      recv_size = recv(sock, recv_buff, sizeof(recv_buff), 0);
-      if(recv_size == SOCKET_ERROR || recv_size == 0) {
-        /* stream error... */
-        closesocket(sock); WSACleanup();
-        fclose(fp); GME_FileDelete(file_path);
-        if(on_err) on_err(url_str);
-        GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Body download", "recv failed");
-        return GME_HTTPGET_ERR_REC;
-      }
-
-      if(fwrite(&recv_buff, 1, recv_size, fp) != recv_size) {
-        closesocket(sock); WSACleanup();
-        fclose(fp); GME_FileDelete(file_path);
-        if(on_err) on_err(url_str);
-        GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Body download write error", GME_StrToMbs(file_path).c_str());
-        return GME_HTTPGET_ERR_FWR;
-      }
-      body_size += recv_size;
-
-      if(on_dnl) {
-        pct = (float(body_size)/float(header.content_length))*100;
-        bps = float(body_size)/(float(clock()-t)/CLOCKS_PER_SEC);
-        if(!on_dnl(pct, bps)) {
-          closesocket(sock); WSACleanup(); fclose(fp);
-          fclose(fp); GME_FileDelete(file_path);
-          GME_Logs(GME_LOG_WARNING, "GME_NetwHttpGET", "Body download", "Canceled by user");
-          return 0; // cancelled
+      body_size += dwSize;
+      if (on_dnl) {
+        int pct = (int)(100LL * body_size / content_length);
+        clock_t deltat = clock() - t;
+        if (deltat == 0)
+          deltat = 1;
+        int bps = (long long)CLOCKS_PER_SEC * body_size / deltat;
+        if (!on_dnl(pct, bps)) {
+          GME_Logs(GME_LOG_NOTICE, "GME_NetwHttpGET", "Body download", "Canceled by user");
+          retval = 0; // cancelled
+          goto _out;
         }
       }
 
-    } while(body_size < header.content_length);
-  }
+      if (!WinHttpReadData(hRequest, (LPVOID)pszOutBuffer, dwSize, &dwDownloaded))
+      {
+        GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Error in reading data", url_str);
+        retval = GME_HTTPGET_ERR_REC;
+        goto _out;
+      }
 
-  /* download successful */
-  closesocket(sock); WSACleanup();
+      int written = fwrite(pszOutBuffer, dwSize, 1, fp);
+      if (written != 1) {
+        GME_Logs(GME_LOG_ERROR, "GME_NetwHttpGET", "Body download write error", GME_StrToMbs(file_path).c_str());
+        retval = GME_HTTPGET_ERR_FWR;
+        goto _out;
+      }
+    }
+
+  } while (dwSize > 0);
+  delete[] pszOutBuffer; 
+  pszOutBuffer = NULL;
+
   fclose(fp);
-
-  /* send downloaded file path to callback */
-  if(on_sav) on_sav(file_path.c_str());
+  delete[] pszOutBuffer;
+  WinHttpCloseHandle(hRequest);
+  WinHttpCloseHandle(hConnect);
+  WinHttpCloseHandle(hSession);
+  delete[] lpwurl;
+  if (on_sav) on_sav(file_path.c_str());
 
   return 0; // success
-}
 
+_out:
+  if (fp != NULL)
+    fclose(fp);
+
+  if (pszOutBuffer != NULL)
+    delete[] pszOutBuffer;
+
+  if (hRequest != NULL)
+    WinHttpCloseHandle(hRequest);
+
+  if (hConnect != NULL)
+    WinHttpCloseHandle(hConnect);
+
+  if (hSession != NULL)
+    WinHttpCloseHandle(hSession);
+
+  delete[] lpwurl;
+
+  if (on_err) on_err(url_str);
+
+  return retval;
+}  
