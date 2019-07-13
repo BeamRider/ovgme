@@ -59,7 +59,6 @@ void GME_ProfUpdList()
 {
   std::wstring conf_path = GME_GameGetCurConfPath();
 
-  std::wstring prf_file;
   GME_Profile_Struct prf_entry;
 
   g_GME_Profile_List.clear();
@@ -111,11 +110,11 @@ void GME_ProfEnaMenu(bool enable)
 {
   /* delete previous profiles entries */
   if(enable) {
-    for(int i = 0; i < g_GME_Profile_List.size(); i++) {
+    for(int i = 0; i < (int)g_GME_Profile_List.size(); i++) {
       EnableMenuItem(g_hmnuMain, g_GME_Profile_List[i].id, MF_BYCOMMAND);
     }
   } else {
-    for(int i = 0; i < g_GME_Profile_List.size(); i++) {
+    for(int i = 0; i < (int)g_GME_Profile_List.size(); i++) {
       EnableMenuItem(g_hmnuMain, g_GME_Profile_List[i].id, MF_GRAYED);
     }
   }
@@ -132,7 +131,7 @@ bool GME_ProfDelete()
 
   int prof_id = -1;
   /* search for profile name in list */
-  for(int i = 0; i < g_GME_Profile_List.size(); i++) {
+  for(int i = 0; i < (int)g_GME_Profile_List.size(); i++) {
     if(g_GME_Profile_List[i].name == prfl_name) {
       prof_id = i;
       break;

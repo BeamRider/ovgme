@@ -15,7 +15,7 @@
 
 #include "gme_tools.h"
 #include "gme_logs.h"
-
+#include <cwctype>
 /* -------------------------------- System related toolkit ------------------------------------- */
 
 /*
@@ -168,7 +168,7 @@ void GME_StrToUpper(std::string& str)
 {
   size_t s = str.length();
   for(unsigned i = 0; i < s; i++)
-    str[i] = std::towupper(str[i]);
+    str[i] = (char)std::towupper(str[i]);
 }
 
 std::string GME_StrToUpper(const char* str)
@@ -176,7 +176,7 @@ std::string GME_StrToUpper(const char* str)
   std::string ret;
   size_t s = strlen(str);
   for(unsigned i = 0; i < s; i++)
-    ret.push_back(std::towupper(str[i]));
+    ret.push_back((char)std::towupper(str[i]));
   return ret;
 }
 

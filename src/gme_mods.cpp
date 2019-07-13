@@ -1391,10 +1391,6 @@ DWORD WINAPI GME_ModsMake_Th(void* args)
     return 0;
   }
 
-  FILE* fp;
-  size_t fs;
-  ubyte* data;
-
   std::string a_name;
   std::string f_name;
 

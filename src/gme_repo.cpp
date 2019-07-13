@@ -47,11 +47,11 @@ inline GME_ModVers_Struct GME_RepoParseVers(const std::wstring& str)
   GME_StrSplit(str, &numbers, L".");
 
   if(!numbers.empty()) {
-    version.major = wcstol(numbers[0].c_str(), NULL, 10);
+    version.major = (short)wcstol(numbers[0].c_str(), NULL, 10);
     if(numbers.size() > 1) {
-      version.minor = wcstol(numbers[1].c_str(), NULL, 10);
+      version.minor = (short)wcstol(numbers[1].c_str(), NULL, 10);
       if(numbers.size() > 2) {
-        version.revis = wcstol(numbers[2].c_str(), NULL, 10);
+        version.revis = (short)wcstol(numbers[2].c_str(), NULL, 10);
       }
     }
   }
@@ -145,7 +145,7 @@ struct GME_ReposMod_Struct
     memset(&version, 0, sizeof(GME_ModVers_Struct));
   }
 
-  clear() {
+  void clear() {
     memset(name, 0, 255*sizeof(wchar_t));
     memset(url, 0, 255);
     memset(&version, 0, sizeof(GME_ModVers_Struct));

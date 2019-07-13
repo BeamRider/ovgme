@@ -19,6 +19,9 @@
 
 int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, char* argv, int nShowCmd)
 {
+  (void)hPrevInstance;
+  (void)nShowCmd;
+
   g_hInst = hInstance;
   InitCommonControls();
 
