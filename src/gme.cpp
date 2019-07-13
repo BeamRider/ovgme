@@ -43,6 +43,6 @@ wchar_t version[128];
 
 wchar_t* GME_GetVersionString()
 {
-  swprintf(version, L"%d.%d.%d-SNAPSHOT - %s", GME_APP_MAJOR, GME_APP_MINOR, GME_APP_REVIS, GME_APP_DATE);
+  swprintf(version, L"%d.%d.%d-SNAPSHOT AMVI Edition - %s", GME_APP_MAJOR, GME_APP_MINOR, GME_APP_REVIS, GME_APP_DATE);
   return version;
 }

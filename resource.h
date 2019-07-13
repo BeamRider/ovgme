@@ -31,6 +31,7 @@
 #define DLG_PROF_NEW                            172
 #define DLG_PROF_DEL                            174
 #define DLG_LOGS                                176
+#define IDB_AMVI                                181
 #define BTN_ADD                                 40000
 #define BTN_APPLY                               40000
 #define CMB_GAMELIST                            40000
@@ -140,3 +141,4 @@
 #define POP_MODCREATE                           40068
 #define POP_MODDELETE                           40069
 #define POP_MODEDIT                             40070
+#define IMG_AMVI                                40071

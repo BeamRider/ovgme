@@ -3,9 +3,10 @@ OvGME
 
 Enhanced Generic Mod Enabler and manager.
 ----------------------------------------------------------------------------------------
-Version: 1.7.4
+Version: 1.8.0 AMVI Edition
+Based on OvGME by sedenion
 ----------------------------------------------------------------------------------------
-Home page: https://github.com/sedenion/ovgme
+Home page: https://github.com/beamrider/ovgme
 
 ----------------------------------------------------------------------------------------
 Presentation
