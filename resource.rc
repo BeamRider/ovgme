@@ -114,12 +114,12 @@ IDR_MENU MENUEX
 LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
 IDR_POPMOD MENU
 {
-    POPUP ""
-    {
-    }
-    POPUP ""
-    {
-    }
+//    POPUP ""
+//    {
+//    }
+//    POPUP ""
+//    {
+//    }
     POPUP "dummy"
     {
         MENUITEM "Toggle Selected", POP_TOGGLE
@@ -146,11 +146,12 @@ CAPTION "OvGME About"
 FONT 8, "Ms Shell Dlg"
 {
     CTEXT           "Static", TXT_GPL, 7, 98, 249, 100, SS_CENTER, WS_EX_LEFT
-    CTEXT           "https://github.com/sedenion/ovgme", 0, 7, 76, 249, 9, SS_CENTER, WS_EX_LEFT
+    CTEXT           "https://github.com/beamrider/ovgme", 0, 7, 76, 249, 9, SS_CENTER, WS_EX_LEFT
     CTEXT           "Version:", TXT_VERSION, 7, 44, 249, 9, SS_CENTER, WS_EX_LEFT
     CONTROL         IDB_LOGO, 0, WC_STATIC, SS_BITMAP, 83, 7, 95, 35, WS_EX_LEFT
     DEFPUSHBUTTON   "Close", IDOK, 107, 203, 50, 14, 0, WS_EX_LEFT
-    CTEXT           "Copyright (c) 2016 Eric M.", 0, 7, 55, 249, 9, SS_CENTER, WS_EX_LEFT
+    CTEXT           "Copyright (c) 2019 Egon 'Rider' Carusi", 0, 7, 55, 249, 9, SS_CENTER, WS_EX_LEFT
+    CTEXT           "Based on OVGME by Eric M.", 0, 7, 64, 249, 9, SS_CENTER, WS_EX_LEFT
 }
 
 
@@ -209,7 +210,7 @@ LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
 DLG_MAIN DIALOG 0, 0, 380, 340
 STYLE DS_3DLOOK | DS_CENTER | DS_SHELLFONT | WS_CAPTION | WS_VISIBLE | WS_GROUP | WS_TABSTOP | WS_THICKFRAME | WS_SYSMENU
 EXSTYLE WS_EX_WINDOWEDGE
-CAPTION "OvGME"
+CAPTION "OvGME - AMVI Edition"
 FONT 8, "Ms Shell Dlg"
 {
     PUSHBUTTON      "Enable selected", BTN_MODENA, 82, 302, 67, 14, 0, WS_EX_LEFT
