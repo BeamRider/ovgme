@@ -71,7 +71,7 @@ along with this program. If not, see http://www.gnu.org/licenses/"
 #define GME_APP_NAME      L"OvGME - AMVI Edition"
 #define GME_APP_MAJOR     1
 #define GME_APP_MINOR     8
-#define GME_APP_REVIS     0
+#define GME_APP_REVIS     1
 #define GME_APP_DATE      L"July 2019"
 
 /* handle for folder changes tracking */

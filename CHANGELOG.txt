@@ -1,3 +1,8 @@
+OvGME 1.8.1, 2019-07-13
+
+- Fixed gamelist combo size.
+- Fixed privileges when running from installer
+
 OvGME 1.8.0, 2019-07-13
 
 - Changed Network code to support HTTPS.

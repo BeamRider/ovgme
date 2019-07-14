@@ -222,7 +222,7 @@ void GME_DlgMainResize()
   SetWindowPos(GetDlgItem(hwd, ENT_MODSPATH), NULL, 20, 91, cli.right-130, 21, SWP_NOZORDER);
 
   SetWindowPos(GetDlgItem(hwd, BOX_TOP), NULL, 212, 0, cli.right-222, 80, SWP_NOZORDER);
-  SetWindowPos(GetDlgItem(hwd, CMB_GAMELIST), NULL, 222, 20, cli.right-260, 22, SWP_NOZORDER);
+  SetWindowPos(GetDlgItem(hwd, CMB_GAMELIST), NULL, 222, 20, cli.right-335, 22, SWP_NOZORDER);
   SetWindowPos(GetDlgItem(hwd, BTN_EDIGAME), NULL, cli.right-92, 19, 35, 23, SWP_NOZORDER);
   SetWindowPos(GetDlgItem(hwd, BTN_ADDGAME), NULL, cli.right-55, 19, 35, 23, SWP_NOZORDER);
   SetWindowPos(GetDlgItem(hwd, ENT_CFGRPATH), NULL, 222, 45, cli.right-242, 21, SWP_NOZORDER);
